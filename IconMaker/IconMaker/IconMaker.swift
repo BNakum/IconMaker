@@ -17,6 +17,8 @@ enum Error: ErrorType {
     case CancelPressed
 }
 
+typealias IconImageInfo = (size: Double, scale: Double, imageName: String)
+
 class IconMaker: NSObject {
     var bundle: NSBundle
     
@@ -43,23 +45,39 @@ class IconMaker: NSObject {
     
     func doMenuAction() {
         do {
-            let originalImage = try self.loadImageAtPath(try self.getOriginalImagePath())
+            let originalImage = try self.loadImageAtPath(try getOriginalImagePath())
             guard let isu = iconSetURL else {
                 throw Error.StringError("Error obtaining result icon path")
             }
             let iconJSONPath = getIconJSONPath(isu)
             let jsonDict = try getJSONDict(iconJSONPath)
-            guard let sizesArray = jsonDict["images"] as? NSArray else {
+            guard let sizesArray = jsonDict["images"] as? Array<Dictionary<String, String>> else {
                 throw Error.StringError("Error retrieving icon sizes from icon JSON")
             }
-            for singleSize in sizesArray {
-                guard let si = singleSize as? NSMutableDictionary,
-                    let size = si["size"] as? String,
-                    let scale = si["scale"] as? String else {
-                        throw Error.StringError("")
+            let iconImageInfoArray: [IconImageInfo] = sizesArray.map({ (singleSize: Dictionary<String, String>) -> IconImageInfo in
+                let size = Double(singleSize["size"]!.componentsSeparatedByString("x").first!)!
+                let scale = Double(singleSize["scale"]!.componentsSeparatedByString("x").first!)!
+                return (size: size, scale: scale, imageName: "Icon-\(size)@\(scale).png")
+            })
+            let largest = iconImageInfoArray
+                .map { $0.size * $0.scale }
+                .reduce(0.0) { acc, totalSize in
+                return acc < totalSize ? totalSize : acc
+            }
+            
+            checkIconSize(largest, originalImageSize: Double(originalImage.size.width))
+            
+            for singleImageInfo in iconImageInfoArray {
+                let resultName =
+            }
+        
+            for var singleSize in sizesArray {
+                guard let size = singleSize["size"],
+                    let scale = singleSize["scale"] else {
+                        throw Error.StringError("Error parsing image size or scale")
                 }
                 let resultName = try resizeImage(originalImage, stringSize: size, stringScale: scale, savePath: isu)
-                si["filename"] = resultName
+                singleSize["filename"] = resultName
             }
             try saveResultingIconJSON(jsonDict, savePath: iconJSONPath)
         } catch Error.StringError(let description) {
@@ -69,7 +87,13 @@ class IconMaker: NSObject {
         }
     }
     
-    func showError(description: String) {
+    func checkIconSize(maxRequiredSize: Double, originalImageSize: Double) {
+        if maxRequiredSize > originalImageSize {
+            showAlert("Maximum reqired image size is bigger than original image size. Consider providing better quality image to avoid upscaling")
+        }
+    }
+    
+    func showAlert(description: String) {
         let error = NSError(domain: description, code:0, userInfo:nil)
         NSAlert(error: error).runModal()
     }
@@ -106,22 +130,18 @@ class IconMaker: NSObject {
         guard let data = NSData(contentsOfURL: jsonDictPath) else {
             throw Error.StringError("Loading icon JSON failed")
         }
-        guard let jsonDict = try? NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers) as? NSDictionary else {
+        guard let jsonDict = try NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers) as? NSDictionary else {
             throw Error.StringError("Parsing icon JSON failed")
         }
-        return jsonDict!
+        return jsonDict
     }
     
-    func resizeImage(img: NSImage, stringSize: String, stringScale: String, savePath: NSURL) throws -> String {
-        guard let size = Double(stringSize.componentsSeparatedByString("x").first!),
-            let scale = Double(stringScale.componentsSeparatedByString("x").first!) else {
-                throw Error.StringError("Error retrieving icon size or scale")
-        }
+    func resizeImage(img: NSImage, size: Double, scale: Double, savePath: NSURL) throws -> String {
         let resultSize = NSSize(width: size * scale, height: size * scale)
         img.size = resultSize
         _ = NSBitmapImageRep(focusedViewRect: NSRect(x: 0.0, y: 0.0, width: img.size.width, height: img.size.height))
         let data = try dataFromImage(img, size: Int(size * scale))
-        let imgName = "Icon-\(size)@\(stringScale).png"
+        let imgName = "Icon-\(size)@\(scale).png"
         guard data.writeToURL(savePath.URLByAppendingPathComponent(imgName), atomically: true) else {
             throw Error.StringError("Error saving icon")
         }
